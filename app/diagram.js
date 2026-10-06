@@ -7,10 +7,11 @@ const Fish = (() => {
   // [peso, tamanho, altura da linha]
   const F = { cause: [600, 13, 17], sub: [400, 12, 15], cat: [700, 14, 18], effect: [700, 16, 21], title: [700, 18, 24] };
   const TH = {
-    light: { bg: '#ffffff', ink: '#1f2937', sub: '#475569', spine: '#334155', mute: '#9ca3af', head: '#0f172a', headInk: '#ffffff', sel: '#0e7490', root: '#dc2626', ok: '#047857' },
-    dark: { bg: '#0f172a', ink: '#e5e7eb', sub: '#cbd5e1', spine: '#94a3b8', mute: '#64748b', head: '#e2e8f0', headInk: '#0f172a', sel: '#22d3ee', root: '#f87171', ok: '#34d399' },
+    light: { bg: '#ffffff', ink: '#1f2937', sub: '#475569', spine: '#334155', mute: '#9ca3af', head: '#0f172a', headInk: '#ffffff', sel: '#0e7490', root: '#dc2626', ok: '#047857', body: '#0e7490', eye: '#ffffff' },
+    dark: { bg: '#0f172a', ink: '#e5e7eb', sub: '#cbd5e1', spine: '#94a3b8', mute: '#64748b', head: '#e2e8f0', headInk: '#0f172a', sel: '#22d3ee', root: '#f87171', ok: '#34d399', body: '#22b8d6', eye: '#0f172a' },
   };
   const TAN = 0.45; // inclinação das espinhas
+  const TAIL = 86; // largura da cauda do peixe
   const r = n => Math.round(n * 10) / 10;
   let ctx;
   function tw(t, f) {
@@ -101,23 +102,33 @@ const Fish = (() => {
     });
 
     // 3) Posição de cada par (cima/baixo) na espinha central
-    const PAD = 24, A = [];
-    let a = PAD;
+    const PAD = 24, X0 = PAD + TAIL, LEAD = 44, A = []; // X0: onde a cauda encontra o corpo; LEAD: o corpo engorda antes dos textos
+    let a = X0;
     for (let k = 0; k * 2 < M.length; k++) {
       const t = M[2 * k], b = M[2 * k + 1];
-      let na = (k ? a + 30 : PAD) + Math.max(t.ext, b ? b.ext : 0);
+      let na = (k ? a + 30 : X0 + LEAD) + Math.max(t.ext, b ? b.ext : 0);
       if (k) for (const [p, q] of [[M[2 * k - 2], t], [M[2 * k - 1], b]]) if (p && q) na = Math.max(na, a + (p.lab.w + q.lab.w) / 2 + 40);
       A.push(a = na);
     }
     const eff = block((d.effect || '').trim() || 'Efeito (problema)', F.effect, 210);
-    const hw = eff.w + 40, hh = eff.h + 32, hx = (M.length ? a : PAD + 180) + 56;
+    // o corpo envolve as causas; as etiquetas das categorias ficam na borda, como nadadeiras
+    const hx = (M.length ? a : X0 + 180) + 56, hh = eff.h + 64;
+    const bT = Math.max(hh / 2 + 10, side(true).length ? Ht - 6 : 0), bB = Math.max(hh / 2 + 10, side(false).length ? Hb - 6 : 0);
+    // cabeça do peixe: continua o corpo até o focinho; o efeito fica escrito dentro dela
+    const hw = Math.max(eff.w + 130, (bT + bB) * 0.55), tH = Math.min(Math.min(bT, bB) * 0.85, 150); // tH: meia altura da cauda
     const labH = t => Math.max(0, ...side(t).map(m => m.lab.h + 12));
     const tb = o.title ? block(o.title, F.title, Math.max(300, hx + hw - PAD)) : null;
-    const up = Math.max(hh / 2, side(true).length ? Ht + labH(true) : 0) + PAD, down = Math.max(hh / 2, side(false).length ? Hb + labH(false) : 0) + PAD;
+    const up = Math.max(bT, side(true).length ? Ht + labH(true) : 0) + PAD, down = Math.max(bB, side(false).length ? Hb + labH(false) : 0) + PAD;
     const headRoom = tb ? tb.h + 20 : 0, W = hx + hw + PAD, H = up + down + headRoom;
 
-    // 4) Desenho
-    out.push(line(PAD, 0, hx, 0, T.spine, 4));
+    // 4) Desenho: silhueta (cauda, corpo e cabeça) por baixo das espinhas
+    const BL = hx - X0, nx = hx + hw, fish = `fill="${T.body}" fill-opacity="0.08" stroke="${T.body}" stroke-opacity="0.55" stroke-width="2" stroke-linejoin="round"`;
+    const snout = (b, s) => `C${r(hx + hw * 0.62)} ${r(s * b)} ${r(nx)} ${r(s * b * 0.4)} ${r(nx)} 0`; // da nuca até a ponta do focinho
+    const snoutBack = (b, s) => `C${r(nx)} ${r(s * b * 0.4)} ${r(hx + hw * 0.62)} ${r(s * b)} ${r(hx)} ${r(s * b)}`;
+    out.push(`<path d="M${r(X0 + 8)} 0C${r(X0 - 30)} -10 ${r(PAD + 20)} ${r(-tH * 0.7)} ${r(PAD)} ${r(-tH)}C${r(PAD + TAIL * 0.32)} ${r(-tH * 0.35)} ${r(PAD + TAIL * 0.32)} ${r(tH * 0.35)} ${r(PAD)} ${r(tH)}C${r(PAD + 20)} ${r(tH * 0.7)} ${r(X0 - 30)} 10 ${r(X0 + 8)} 0Z" ${fish}/>`);
+    out.push(`<path d="${[-0.62, -0.25, 0.25, 0.62].map(f => `M${r(PAD + 10 + Math.abs(f) * 8)} ${r(tH * f)}L${r(X0 - 6)} ${r(f * 4)}`).join('')}" fill="none" stroke="${T.body}" stroke-opacity="0.35" stroke-width="1.2" stroke-linecap="round"/>`);
+    out.push(`<path d="M${r(X0)} 0C${r(X0 + 2)} ${r(-bT * 0.62)} ${r(X0 + BL * 0.08)} ${r(-bT)} ${r(X0 + BL * 0.3)} ${r(-bT)}L${r(hx)} ${r(-bT)}${snout(bT, -1)}${snoutBack(bB, 1)}L${r(X0 + BL * 0.3)} ${r(bB)}C${r(X0 + BL * 0.08)} ${r(bB)} ${r(X0 + 2)} ${r(bB * 0.62)} ${r(X0)} 0Z" ${fish}/>`);
+    out.push(line(X0, 0, hx, 0, T.spine, 4));
     M.forEach((m, i) => {
       const ax = A[i >> 1], sg = m.top ? -1 : 1, tipX = ax - m.H * TAN, tipY = sg * m.H;
       out.push(line(tipX, tipY, ax, 0, m.color, 2.6));
@@ -135,8 +146,14 @@ const Fish = (() => {
         out.push(node(x.ca.id, 'cause', lx - 10 - x.b.w, y - x.b.h / 2 - 2, x.b.w + 8, x.b.h + 4, text(x.b, F.cause, lx - 6, y, 'end', ink(x.ca) || T.ink, deco(x.ca))));
       });
     });
-    out.push(node('effect', 'effect', hx, -hh / 2, hw, hh,
-      `<path d="M${r(hx - 14)} -9L${r(hx)} 0L${r(hx - 14)} 9z" fill="${T.spine}"/><rect x="${r(hx)}" y="${r(-hh / 2)}" width="${r(hw)}" height="${r(hh)}" rx="10" fill="${T.head}"/>` + text(eff, F.effect, hx + hw / 2, 0, 'middle', T.headInk)));
+    // cabeça: guelra curva separando do corpo, olho, boca e o efeito escrito dentro
+    const gx = hx + Math.min(26, hw * 0.08), tx = gx + 16 + eff.w / 2, ey = -Math.min(bT * 0.5, eff.h / 2 + 22), ex = Math.min(nx - 40, Math.max(tx + eff.w / 2 + 14, hx + hw * 0.62));
+    out.push(node('effect', 'effect', hx, -bT, hw, bT + bB,
+      `<path d="M${r(hx)} ${r(-bT)}${snout(bT, -1)}${snoutBack(bB, 1)}Q${r(gx)} 0 ${r(hx)} ${r(-bT)}Z" fill="${T.head}"/>` +
+      `<path d="M${r(hx + 8)} ${r(-bT * 0.7)}Q${r(gx + 8)} 0 ${r(hx + 8)} ${r(bB * 0.7)}" fill="none" stroke="${T.headInk}" stroke-opacity="0.3" stroke-width="2" stroke-linecap="round"/>` +
+      `<circle cx="${r(ex)}" cy="${r(ey)}" r="9" fill="${T.eye}"/><circle cx="${r(ex + 2.5)}" cy="${r(ey)}" r="4.5" fill="${T.head}"/>` +
+      `<path d="M${r(nx - 26)} ${r(bB * 0.18)}Q${r(nx - 13)} ${r(bB * 0.1)} ${r(nx - 4)} ${r(bB * 0.06)}" fill="none" stroke="${T.headInk}" stroke-opacity="0.5" stroke-width="1.8" stroke-linecap="round"/>` +
+      text(eff, F.effect, tx, 2, 'middle', T.headInk)));
 
     const size = o.fluid ? '' : ` width="${r(W)}" height="${r(H)}"`;
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${r(W)} ${r(H)}"${size}>` +

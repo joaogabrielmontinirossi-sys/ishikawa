@@ -704,7 +704,7 @@ ${o.actions && acts ? `<table><thead><tr><th class="cap" colspan="10">Plano de a
       <p class="muted">O Ishikawa grava o arquivo ishikawa-sync.json nessa pasta a cada alteração e o Google Drive o envia para a sua conta. Outro computador com o Ishikawa e o mesmo Drive recebe os diagramas automaticamente.</p>` : `<label>Sincronização</label><p class="muted">A sincronização automática com o Google Drive funciona no aplicativo de Windows (Ishikawa.exe). Aqui, use o backup abaixo para levar os diagramas a outro aparelho.</p>${canInstall() ? `<label>Aplicativo</label><button class="btn ghost sm" data-k="install">${ic('dl')} Instalar o Ishikawa neste aparelho</button><p class="muted">Ele ganha um ícone na tela inicial e abre mesmo sem internet.</p>` : ''}`}
       <label>Backup e migração</label>
       <div class="row"><button class="btn ghost sm" data-k="backup">${ic('dl')} Exportar backup (.json)</button><button class="btn ghost sm" data-k="import">${ic('up')} Importar…</button></div>
-      <p class="muted">${DB.persistent() ? 'Dados salvos neste dispositivo' : 'Atenção: armazenamento indisponível, os dados somem ao fechar'} · ${count(live().length, 'diagrama', 'diagramas')} · Ishikawa 1.1</p>
+      <p class="muted">${DB.persistent() ? 'Dados salvos neste dispositivo' : 'Atenção: armazenamento indisponível, os dados somem ao fechar'} · ${count(live().length, 'diagrama', 'diagramas')} · Ishikawa 1.2</p>
       <label>Zona de perigo</label><button class="btn danger sm" data-k="wipe">Apagar todos os dados deste dispositivo</button>` });
     $('#settheme', m.el).value = S.set.theme;
     $('#settheme', m.el).onchange = e => { S.set.theme = e.target.value; Store.saveSet(); applyTheme(); draw(); };

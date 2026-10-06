@@ -1,5 +1,5 @@
 /* Ishikawa — service worker da versão web: guarda o app para abrir sem internet. */
-const VERSION = 'ishikawa-1.1.0';
+const VERSION = 'ishikawa-1.2.0';
 const FILES = ['./', 'index.html', 'app.css', 'store.js', 'diagram.js', 'app.js', 'logo.svg', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png'];
 
 self.addEventListener('install', e => {
