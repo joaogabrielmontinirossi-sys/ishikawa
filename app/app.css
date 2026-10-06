@@ -191,4 +191,29 @@ details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-
   #zoombar { bottom: auto; top: 12px; }
   .sep { display: none; }
   .tpls { grid-template-columns: 1fr; }
+  /* celular: rótulos curtos nos botões, áreas seguras (entalhe) e campos sem zoom automático do iPhone */
+  .tools { flex-wrap: wrap; justify-content: flex-end; }
+  .tools .btn span { display: inline; }
+  #topbar { padding-top: max(6px, env(safe-area-inset-top)); padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
+  #sidebar { padding-top: max(14px, env(safe-area-inset-top)); padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  #panel { padding-bottom: env(safe-area-inset-bottom); }
+  #details { max-height: 42%; }
+  input:not([type=checkbox]):not([type=radio]), select, textarea { font-size: 16px; }
+  .modalwrap { align-items: end; padding: 0; }
+  .modal { width: 100%; border-radius: 16px 16px 0 0; max-height: 92vh; padding-bottom: env(safe-area-inset-bottom); }
+  #toast { bottom: calc(24px + env(safe-area-inset-bottom)); }
+}
+@media (max-width: 520px) {
+  .tools .icon[data-act=togglePanel] { display: none; }
+  .grid2 { grid-template-columns: 1fr; }
+  .stats b { font-size: 16px; }
+}
+/* Telas de toque: sem passar o mouse, os botões ficam sempre visíveis e maiores */
+@media (pointer: coarse) {
+  .orow .icon, .ditem .icon { opacity: 1; }
+  .icon { width: 38px; height: 38px; }
+  .icon.sm { width: 32px; height: 32px; }
+  .btn.sm { padding: 8px 12px; }
+  .pop button { padding: 12px 12px; }
+  .hint.keys { display: none; }
 }

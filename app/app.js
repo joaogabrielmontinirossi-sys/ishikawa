@@ -186,6 +186,27 @@ let toast = () => {};
   }
 
   /* ---------- Barra lateral: lista de diagramas ---------- */
+  /* Instalação como aplicativo (versão web) */
+  const Inst = { prompt: null };
+  const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const canInstall = () => !Sync.avail && !standalone() && /^https:$/.test(location.protocol) && (Inst.prompt || isIOS());
+  async function install() {
+    if (Inst.prompt) {
+      Inst.prompt.prompt();
+      const r = await Inst.prompt.userChoice;
+      Inst.prompt = null; renderSide();
+      if (r.outcome === 'accepted') toast('Ishikawa instalado: procure o ícone na tela inicial');
+      return;
+    }
+    modal({ title: 'Instalar no iPhone ou iPad', body: `
+      <p>No Safari, toque em <b>Compartilhar</b> (o quadrado com a seta para cima) e depois em <b>Adicionar à Tela de Início</b>.</p>
+      <p class="muted">O Ishikawa passa a abrir como um aplicativo, em tela cheia e também sem internet.</p>
+      <div class="mfoot"><button class="btn" data-close>Entendi</button></div>` });
+  }
+  addEventListener('beforeinstallprompt', e => { e.preventDefault(); Inst.prompt = e; renderSide(); });
+  addEventListener('appinstalled', () => { Inst.prompt = null; renderSide(); });
+
   const Sync = { avail: false, on: false, folder: null, detected: null, drives: [], busy: false, again: false, last: 0, error: '' };
   function renderSide() {
     const list = S.diagrams.filter(d => !!d.deleted === showTrash && norm(d.title + ' ' + d.effect).includes(norm(query))).sort((a, b) => b.updated - a.updated);
@@ -199,6 +220,7 @@ let toast = () => {};
         <div class="dt">${esc(d.title || 'Sem título')}</div><div class="ds">${count(Store.count(d), 'causa', 'causas')} · ${fmtRel(d.updated)}</div>
         <button class="icon sm" data-act="${showTrash ? 'trashMenu' : 'itemMenu'}" data-id="${d.id}" title="Mais ações">${ic('more')}</button></div>`).join('') || `<p class="muted pad">${showTrash ? 'A lixeira está vazia.' : query ? 'Nada encontrado.' : 'Nenhum diagrama ainda.'}</p>`}</div>
       <div class="sfoot">
+        ${canInstall() ? `<button class="link" data-act="install">${ic('dl')} Instalar o aplicativo</button>` : ''}
         ${!showTrash && trash ? `<button class="link" data-act="toggleTrash">${ic('trash')} Lixeira (${trash})</button>` : ''}
         <button class="link" data-act="settings" title="Ajustes e sincronização">${ic(Sync.on ? 'sync' : 'gear')}<span>${Sync.on ? (Sync.error ? 'Falha na sincronização' : Sync.last ? 'Sincronizado ' + fmtRel(Sync.last) : 'Sincronizando…') : 'Ajustes'}</span></button>
       </div>`;
@@ -340,21 +362,39 @@ let toast = () => {};
   }
   function stageEvents() {
     const st = $('#stage');
-    let drag = null, last = { id: null, t: 0 };
+    let drag = null, last = { id: null, t: 0 }, pinch = null;
+    const pts = new Map(); // dedos encostados no quadro, para a pinça de zoom
+    const pinchState = () => {
+      const [a, b] = [...pts.values()], r = st.getBoundingClientRect();
+      return { d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top };
+    };
     st.addEventListener('pointerdown', e => {
       if (e.button || e.target.closest('#zoombar,#empty')) return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      st.setPointerCapture(e.pointerId);
+      if (pts.size === 2) { pinch = pinchState(); drag = null; st.classList.remove('panning'); return; }
+      if (pts.size > 2 || pinch) return;
       const g = e.target.closest('[data-id]');
       drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, id: g && g.dataset.id, moved: false };
-      st.setPointerCapture(e.pointerId);
     });
+    const lift = e => { pts.delete(e.pointerId); if (pts.size < 2) pinch = null; };
     st.addEventListener('pointermove', e => {
+      if (pts.has(e.pointerId)) pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinch && pts.size === 2) {
+        const n = pinchState();
+        view.x += n.x - pinch.x; view.y += n.y - pinch.y;
+        zoom(n.d / pinch.d, n.x, n.y);
+        pinch = n;
+        return;
+      }
       if (!drag) return;
       if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 5) return;
       drag.moved = true; auto = false; st.classList.add('panning');
       view.x = drag.vx + e.clientX - drag.x; view.y = drag.vy + e.clientY - drag.y;
       applyView();
     });
-    const up = () => {
+    const up = e => {
+      lift(e);
       const g = drag;
       drag = null; st.classList.remove('panning');
       if (!g || g.moved || !g.id) return;
@@ -364,7 +404,7 @@ let toast = () => {};
       if (twice) { last.t = 0; editInPlace(g.id); }
     };
     st.addEventListener('pointerup', up);
-    st.addEventListener('pointercancel', () => { drag = null; st.classList.remove('panning'); });
+    st.addEventListener('pointercancel', e => { lift(e); drag = null; st.classList.remove('panning'); });
     st.addEventListener('wheel', e => {
       e.preventDefault();
       const r = st.getBoundingClientRect();
@@ -399,7 +439,7 @@ let toast = () => {};
       const color = c.color || Fish.PAL[i % Fish.PAL.length];
       return row('cat', c.id, c.name, 'Categoria', color, 'Nova causa') + c.causes.map(ca => row('cause', ca.id, ca.text, 'Causa', color, 'Nova subcausa') + ca.subs.map(s => row('sub', s.id, s.text, 'Subcausa', color)).join('')).join('');
     }).join('') + `<button class="link addrow" data-act="addCat">${ic('plus')} Categoria</button>
-      <p class="hint"><b>Enter</b> novo item · <b>Ctrl+Enter</b> item dentro · <b>Tab</b> / <b>Shift+Tab</b> muda o nível · <b>Alt+↑↓</b> reordena</p>`;
+      <p class="hint keys"><b>Enter</b> novo item · <b>Ctrl+Enter</b> item dentro · <b>Tab</b> / <b>Shift+Tab</b> muda o nível · <b>Alt+↑↓</b> reordena</p>`;
   }
   const focusRow = id => { const i = $(`#outline .orow[data-id="${id}"] input`); if (i) { i.focus(); i.select(); i.scrollIntoView({ block: 'nearest' }); } };
   function refresh(focusId) {
@@ -529,7 +569,7 @@ ${o.actions && acts ? `<table><thead><tr><th class="cap" colspan="10">Plano de a
       <label class="check"><input type="checkbox" id="pdfcauses"${p.causes ? ' checked' : ''}> Incluir a lista de causas com situação, votos e observações</label>
       <label class="check"><input type="checkbox" id="pdfactions"${p.actions ? ' checked' : ''}> Incluir o plano de ação (5W2H)</label>
       <label class="check"><input type="checkbox" id="pdfnotes"${p.notes ? ' checked' : ''}> Incluir as observações do diagrama</label>
-      <p class="muted">${Sync.avail ? 'O arquivo é gerado direto, sem passar pela tela de impressão.' : 'Na janela de impressão, escolha "Salvar como PDF" como destino.'}</p>
+      <p class="muted">${Sync.avail ? 'O arquivo é gerado direto, sem passar pela tela de impressão.' : matchMedia('(pointer: coarse)').matches ? 'O documento abre numa nova aba com a tela de impressão: escolha "Salvar como PDF" (no iPhone, use Compartilhar › Imprimir e depois Compartilhar de novo para salvar).' : 'Na janela de impressão, escolha "Salvar como PDF" como destino.'}</p>
       <div class="mfoot"><button class="btn ghost" data-close>Cancelar</button><button class="btn" id="pdfok">${ic('pdf')} Gerar PDF</button></div>` });
     $('#pdfpaper', m.el).value = p.paper;
     $('#pdfok', m.el).onclick = async () => {
@@ -548,6 +588,10 @@ ${o.actions && acts ? `<table><thead><tr><th class="cap" colspan="10">Plano de a
     };
   }
   function printDoc(html) {
+    if (matchMedia('(pointer: coarse)').matches) {
+      const w = open(URL.createObjectURL(new Blob([html.replace('</body>', '<script>addEventListener("load",()=>setTimeout(print,400))<\/script></body>')], { type: 'text/html' })), '_blank');
+      if (w) return;
+    }
     const f = document.createElement('iframe');
     f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
     f.onload = () => { f.contentWindow.focus(); f.contentWindow.print(); setTimeout(() => f.remove(), 120000); };
@@ -657,10 +701,10 @@ ${o.actions && acts ? `<table><thead><tr><th class="cap" colspan="10">Plano de a
       <p style="margin:0 0 6px">${Sync.on ? `Ativa em <b>${esc(Sync.folder)}</b>${Sync.error ? ` · <span class="err">${esc(Sync.error)}</span>` : Sync.last ? ` · última vez ${fmtRel(Sync.last)}` : ''}` : Sync.detected ? 'Desativada. Google Drive encontrado neste computador.' : 'Desativada. Não encontrei o Google Drive; escolha uma pasta sincronizada.'}</p>
       <div class="row">${Sync.on ? `<button class="btn ghost sm" data-k="syncnow">Sincronizar agora</button><button class="btn ghost sm" data-k="syncoff">Desativar</button>` : Sync.detected ? `<button class="btn sm" data-k="syncauto">Ativar no Google Drive</button>` : ''}${Sync.drives.filter(d => d !== Sync.folder && (Sync.on || d !== Sync.detected)).map(d => `<button class="btn ghost sm" data-k="syncuse" data-path="${esc(d)}">Usar ${esc(d)}</button>`).join('')}<button class="btn ghost sm" data-k="syncpick">Escolher outra pasta…</button></div>
       ${Sync.drives.length > 1 ? '<p class="muted">Há mais de uma conta do Google Drive neste computador: cada unidade (G:, H:…) é uma conta.</p>' : ''}
-      <p class="muted">O Ishikawa grava o arquivo ishikawa-sync.json nessa pasta a cada alteração e o Google Drive o envia para a sua conta. Outro computador com o Ishikawa e o mesmo Drive recebe os diagramas automaticamente.</p>` : '<label>Sincronização</label><p class="muted">A sincronização automática com o Google Drive funciona no aplicativo de Windows (Ishikawa.exe). Aqui, use o backup abaixo para levar os diagramas a outro aparelho.</p>'}
+      <p class="muted">O Ishikawa grava o arquivo ishikawa-sync.json nessa pasta a cada alteração e o Google Drive o envia para a sua conta. Outro computador com o Ishikawa e o mesmo Drive recebe os diagramas automaticamente.</p>` : `<label>Sincronização</label><p class="muted">A sincronização automática com o Google Drive funciona no aplicativo de Windows (Ishikawa.exe). Aqui, use o backup abaixo para levar os diagramas a outro aparelho.</p>${canInstall() ? `<label>Aplicativo</label><button class="btn ghost sm" data-k="install">${ic('dl')} Instalar o Ishikawa neste aparelho</button><p class="muted">Ele ganha um ícone na tela inicial e abre mesmo sem internet.</p>` : ''}`}
       <label>Backup e migração</label>
       <div class="row"><button class="btn ghost sm" data-k="backup">${ic('dl')} Exportar backup (.json)</button><button class="btn ghost sm" data-k="import">${ic('up')} Importar…</button></div>
-      <p class="muted">${DB.persistent() ? 'Dados salvos neste dispositivo' : 'Atenção: armazenamento indisponível, os dados somem ao fechar'} · ${count(live().length, 'diagrama', 'diagramas')} · Ishikawa 1.0</p>
+      <p class="muted">${DB.persistent() ? 'Dados salvos neste dispositivo' : 'Atenção: armazenamento indisponível, os dados somem ao fechar'} · ${count(live().length, 'diagrama', 'diagramas')} · Ishikawa 1.1</p>
       <label>Zona de perigo</label><button class="btn danger sm" data-k="wipe">Apagar todos os dados deste dispositivo</button>` });
     $('#settheme', m.el).value = S.set.theme;
     $('#settheme', m.el).onchange = e => { S.set.theme = e.target.value; Store.saveSet(); applyTheme(); draw(); };
@@ -668,6 +712,7 @@ ${o.actions && acts ? `<table><thead><tr><th class="cap" colspan="10">Plano de a
       const b = e.target.closest('[data-k]'), k = b && b.dataset.k, again = () => { m.close(); settingsModal(); };
       if (k === 'backup') { commit(); download(`ishikawa-backup-${today()}.json`, 'application/json', backupData(S.diagrams)); }
       if (k === 'import') { m.close(); importFiles(); }
+      if (k === 'install') { m.close(); install(); }
       if (k === 'syncnow') { await syncNow(true); again(); }
       if (k === 'syncoff') { await syncConfig('sync/config', 'off'); again(); }
       if (k === 'syncauto') { await syncConfig('sync/config', 'auto'); again(); }
@@ -691,6 +736,7 @@ ${o.actions && acts ? `<table><thead><tr><th class="cap" colspan="10">Plano de a
     open: id => openDiagram(id),
     toggleTrash() { showTrash = !showTrash; renderSide(); },
     settings: settingsModal,
+    install,
     itemMenu(id, el) {
       const d = S.diagrams.find(x => x.id === id);
       popmenu(el, [{ label: 'Duplicar', icon: 'copy', fn: () => { commit(); duplicate(d); } }, { label: 'Exportar arquivo (.json)', icon: 'dl', fn: () => { commit(); download(fname(d) + '.json', 'application/json', backupData([d])); } }, '-', { label: 'Mover para a lixeira', icon: 'trash', danger: true, fn: () => toTrash(d) }]);
@@ -783,6 +829,10 @@ ${o.actions && acts ? `<table><thead><tr><th class="cap" colspan="10">Plano de a
     document.addEventListener('visibilitychange', () => { if (document.hidden) commit(); });
     setInterval(() => { if (!$('.modalwrap') && document.activeElement !== $('#q')) renderSide(); }, 60000);
 
+    if (location.protocol === 'https:' && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(e => console.warn('Sem modo offline:', e));
+      if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    }
     if (/^https?:$/.test(location.protocol)) await syncInfo();
     if (Sync.avail) {
       const first = Sync.on && !S.set.syncedOnce;

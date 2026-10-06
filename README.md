@@ -8,6 +8,17 @@ Pegue o `Ishikawa.exe` na página de [Releases](../../releases/latest) e abra. N
 
 Como o arquivo não é assinado, o Windows pode mostrar o aviso do SmartScreen na primeira vez: clique em **Mais informações** e depois em **Executar assim mesmo**.
 
+## No celular (versão web)
+
+Abra **https://joaogabrielmontinirossi-sys.github.io/ishikawa/** no navegador do celular.
+
+- **Android (Chrome)**: toque em **Instalar o aplicativo** no menu lateral (ou em ⋮ › *Instalar app*). O Ishikawa ganha ícone na tela inicial e abre em tela cheia.
+- **iPhone/iPad (Safari)**: toque em **Compartilhar** › **Adicionar à Tela de Início**.
+
+Depois de aberta uma vez, a versão web funciona sem internet. Os diagramas ficam guardados no próprio aparelho; para levá-los ao computador (ou trazê-los de lá), use **Ajustes › Exportar backup** e **Importar…**. No quadro, arraste com um dedo para mover, faça a pinça para ampliar e toque duas vezes num item para editar o texto.
+
+A cada alteração na pasta `app/` da branch `main`, o GitHub Actions publica a versão nova automaticamente (`.github/workflows/web.yml`).
+
 ## O que ele faz
 
 - **Diagrama desenhado sozinho**: efeito, categorias, causas e subcausas são posicionados automaticamente, sem sobreposição.
