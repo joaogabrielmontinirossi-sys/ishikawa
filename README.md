@@ -1,5 +1,7 @@
 # Ishikawa
 
+[![Captura de tela do Ishikawa](docs/captura.png)](https://joaogabrielmontinirossi-sys.github.io/ishikawa/)
+
 Diagramas de causa e efeito (espinha de peixe) para Windows, com plano de ação, exportação em PDF e sincronização entre computadores pelo Google Drive.
 
 ## Baixar
@@ -55,3 +57,7 @@ Gera `dist\Ishikawa.exe` e `dist\ishikawa.html` (versão em arquivo único, que 
 | `app/` | O aplicativo (HTML, CSS e JavaScript puros, sem dependências) |
 | `desktop/Ishikawa.cs` | Programa de Windows: serve o app em `localhost`, grava a pasta de sincronização e gera o PDF |
 | `build.ps1` | Gera os ícones, compila o `.exe` e monta o arquivo único |
+
+## Licença
+
+[MIT](LICENSE): pode usar, copiar, modificar e distribuir livremente, mantendo o aviso de autoria.
