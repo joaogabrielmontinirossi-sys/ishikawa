@@ -249,6 +249,140 @@
     running = false;
   }
 
+  /* ---------- dados vinculados: a mesma tarefa em todos os apps vinculados ----------
+     Cada tarefa pertence a um grupo. O grupo nasce no app onde a tarefa foi criada (origem~id) e, nos outros,
+     a tarefa usa um id previsível (ws-<código da origem>-<id>), então dois aparelhos nunca criam duplicatas.
+     O estado combinado de cada grupo fica em ws-canon; cada app compara o que tem com o que viu por último
+     (ws-base): se mudou aqui, publica; se mudou lá, puxa. Vale para título, data, texto e concluído. */
+  var TASK = { 'frondosa': 'tasks', 'alvorada.jgmrossi': 'items', 'capynote': 'tasks', 'kanban': 'cartoes', 'blocos': 'blocos', 'blocos2': 'blocos', 'blocos3': 'pecas', 'orbita': 'tasks' };
+  var CODE = { 'frondosa': 'fr', 'alvorada.jgmrossi': 'al', 'capynote': 'cn', 'kanban': 'kb', 'blocos': 'b1', 'blocos2': 'b2', 'blocos3': 'b3', 'orbita': 'or' }, UNCODE = {};
+  Object.keys(CODE).forEach(function (a) { UNCODE[CODE[a]] = a; });
+  var bRunning = false, warned = {};
+  function pairId(a, b) { return a < b ? a + '|' + b : b + '|' + a; }
+  function bridges() { var P = ls('workspace-v1') || {}; return { all: !!(P.bridgeAll && P.bridgeAll.on), pairs: (P.bridges && typeof P.bridges === 'object') ? P.bridges : {} }; }
+  function bridged(a, b, B) { if (!TASK[a] || !TASK[b] || a === b) return false; if (B.all) return true; var p = B.pairs[pairId(a, b)]; return !!(p && p.on); }
+  function hash(s) { var h = 5381; for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + ':' + s.length; }
+  function isDone(r) { return !!(r.done && typeof r.done !== 'object') || !!r.feito || r.status === 'done'; }
+  function rawBody(r) { return pick(r, BKEYS); }
+  function eligible(r, F) {
+    if (!r || !r.id || r.deleted || r.lixo || r.arquivado || r.arquivada || r.pai || r.rrule) return false;
+    if (APP === 'alvorada.jgmrossi' && r.type !== 'task') return false;
+    if (APP === 'blocos2' && r.forma === 'nota') return false;
+    return !!String(r[F.t] || '').trim();
+  }
+  function groupOf(store, id, to) {
+    var k = APP + ':' + store + ':' + id;
+    for (var n = 0; n < 4 && to[k]; n++) k = to[k]; // uma cópia espelhada pertence ao grupo do original
+    var p = parse(k);
+    if (TASK[p.app] !== p.store) p = parse(APP + ':' + store + ':' + id);
+    var m = /^ws-([a-z0-9]{2})-(.+)$/.exec(p.id);
+    return m && UNCODE[m[1]] ? UNCODE[m[1]] + '~' + m[2] : p.app + '~' + p.id;
+  }
+  function myIdFor(G) { var i = G.indexOf('~'), oa = G.slice(0, i), oid = G.slice(i + 1); return oa === APP ? oid : 'ws-' + CODE[oa] + '-' + oid; }
+  async function bridge() {
+    var out = { made: 0, pulled: 0, more: false };
+    if (!ad || ad.loose || !isReady || bRunning || !TASK[APP] || typing()) return out;
+    var B = bridges();
+    if (!Object.keys(TASK).some(function (x) { return bridged(APP, x, B); })) return out;
+    bRunning = true;
+    try {
+      var store = TASK[APP], P = ls('workspace-v1') || {}, links = P.links || {}, to = {};
+      for (var lk in links) { var L = links[lk]; if (L && L.on && L.mirror && L.mirror.to) to[L.mirror.to] = L.mirror.from; }
+      var canon = ls('ws-canon') || {}, base = ls('ws-base') || {}, seeds = ls('ws-seed') || {}, touched = {}, myBase = {}, mySeeds = {}, mine = {}, changed = false, now = Date.now();
+      var list = ((ad.list ? ad.list(store) : S[store]) || []).slice(), canDone = !!(DONE[APP] && DONE[APP][store]);
+      // 1) o que eu tenho: publica o que mudou aqui, puxa o que mudou nos outros
+      for (var i = 0; i < list.length; i++) {
+        var rec = list[i], sk = APP + ':' + rec.id;
+        if (rec.seed || rec.ex) { if (!seeds[sk]) mySeeds[sk] = 1; continue; } // exemplos do app nunca entram
+        if (seeds[sk]) continue;
+        var F = fieldsOf(store, rec);
+        if (!eligible(rec, F)) continue;
+        var G = groupOf(store, rec.id, to);
+        if (mine[G]) continue;
+        mine[G] = rec;
+        var C = canon[G] || (canon[G] = { m: {} }), Bs = base[sk] || {}, first = !base[sk], mod = +rec.mod || +rec.updated || 0, upd = false;
+        if (!C.m) C.m = {};
+        if (!C.m[APP]) { C.m[APP] = 1; touched[G] = 1; }
+        if (C.gone && C.gone[APP]) { delete C.gone[APP]; touched[G] = 1; }
+        var vals = { t: String(rec[F.t] || '') };
+        if (F.d) vals.d = String(rec[F.d] || '').slice(0, 10);
+        if (canDone) vals.done = isDone(rec) ? 1 : 0;
+        if (F.b) vals.bh = hash(String(rec[F.b] || ''));
+        for (var x in vals) {
+          var ov = vals[x], cv = C[x], bv = Bs[x];
+          if (cv === undefined || (first ? (ov !== cv && mod >= (C['m_' + x] || 0)) : (ov !== cv && ov !== bv))) { // novo no grupo, ou mudou aqui
+            C[x] = ov; C['m_' + x] = cv === undefined ? (mod || now) : now; if (x === 'bh') C.bs = APP + ':' + store + ':' + rec.id;
+            Bs[x] = ov; touched[G] = 1; myBase[sk] = Bs;
+          } else if (ov === cv) { if (bv !== ov) { Bs[x] = ov; myBase[sk] = Bs; } }
+          else { // mudou em outro app: puxa
+            if (x === 't') { if (!cv) continue; rec[F.t] = cv; }
+            else if (x === 'd') rec[F.d] = cv;
+            else if (x === 'done') ad.done(store, rec, !!cv);
+            else {
+              var src = C.bs && parse(C.bs), raw = src && src.app !== APP ? await readRaw(src) : null;
+              if (!raw) continue;
+              var tb = rawBody(raw);
+              if (hash(tb) !== cv) continue; // a origem mudou de novo: fica para a próxima volta
+              rec[F.b] = tb;
+            }
+            Bs[x] = cv; myBase[sk] = Bs; upd = true;
+          }
+        }
+        if (upd) { if (typing()) break; ad.save(store, rec); changed = true; out.pulled++; }
+      }
+      // 2) o que existe nos apps vinculados e ainda não existe aqui
+      for (var G2 in canon) {
+        if (mine[G2]) continue;
+        var C2 = canon[G2], id = myIdFor(G2), bk = APP + ':' + id;
+        if (!C2 || !C2.m) continue;
+        if (base[bk] || myBase[bk]) { // já existiu aqui e foi apagado ou arquivado: não volta
+          if (!C2.gone) C2.gone = {};
+          if (!C2.gone[APP]) { C2.gone[APP] = 1; delete C2.m[APP]; touched[G2] = 1; }
+          continue;
+        }
+        if ((C2.gone && C2.gone[APP]) || !C2.t || seeds[bk]) continue;
+        if (!Object.keys(C2.m).some(function (a) { return a !== APP && bridged(APP, a, B); })) continue;
+        if (find(store, id)) continue;
+        if (out.made >= 40) { out.more = true; break; }
+        var text = '';
+        if (C2.bs) { var r2 = await readRaw(parse(C2.bs)); if (r2) text = rawBody(r2); }
+        try {
+          ad.create({ id: id, store: store, title: C2.t, text: text, html: '', date: C2.d || '' });
+          var nr = find(store, id);
+          if (!nr) continue;
+          if (C2.done && canDone) { ad.done(store, nr, true); ad.save(store, nr); }
+          var Fn = fieldsOf(store, nr), nb = { t: C2.t };
+          if (Fn.d) nb.d = C2.d || ''; if (canDone) nb.done = C2.done ? 1 : 0; if (Fn.b) nb.bh = hash(text);
+          myBase[bk] = nb; C2.m[APP] = 1; touched[G2] = 1; out.made++; changed = true;
+        } catch (e) { if (!warned[e.message]) { warned[e.message] = 1; console.warn('Elo: não foi possível criar a tarefa vinculada', e); } }
+      }
+      // grava só o que é meu por cima do estado mais recente (outro app pode ter gravado enquanto eu lia)
+      var fc = ls('ws-canon') || {}, fb = ls('ws-base') || {}, fs = ls('ws-seed') || {}, k;
+      for (k in touched) fc[k] = canon[k];
+      for (k in myBase) fb[k] = myBase[k];
+      for (k in mySeeds) fs[k] = 1;
+      try {
+        if (Object.keys(touched).length) localStorage.setItem('ws-canon', JSON.stringify(fc));
+        if (Object.keys(myBase).length) localStorage.setItem('ws-base', JSON.stringify(fb));
+        if (Object.keys(mySeeds).length) localStorage.setItem('ws-seed', JSON.stringify(fs));
+      } catch (e) { console.warn('Elo: armazenamento cheio', e); }
+      if (changed) try { ad.refresh(); } catch (e) {}
+    } catch (e) { console.warn('Elo: dados vinculados', e); }
+    bRunning = false;
+    return out;
+  }
+  function bridgeCycle() { return bridge().then(function (r) { tell({ ws: 'bridged', app: APP, made: r.made, pulled: r.pulled, more: r.more }); return r; }); }
+  function setBridge(other, on) {
+    var P = ls('workspace-v1');
+    if (!P || typeof P !== 'object') P = {};
+    if (!P.bridges || typeof P.bridges !== 'object') P.bridges = {};
+    var others = [].concat(other);
+    others.forEach(function (o) { P.bridges[pairId(APP, o)] = { on: !!on, mod: Date.now() }; });
+    try { localStorage.setItem('workspace-v1', JSON.stringify(P)); } catch (e) {}
+    tell({ ws: 'prefs' });
+    bridgeCycle().then(function () { if (on) tell({ ws: 'bridge-run', apps: [APP].concat(others) }); });
+  }
+
   /* ---------- abrir direto um item ---------- */
   function openItem(store, id) {
     if (!ad || !isReady || !ad.f[store]) return false;
@@ -282,8 +416,8 @@
     return out.sort(function (x, y) { return y.mod - x.mod; });
   }
   function panel() {
-    var list = myLinks();
-    if (!list.length) { if (host) host.hidden = true; return; }
+    var list = myLinks(), isTask = !!(TASK[APP] && ad && !ad.loose);
+    if (!list.length && !isTask) { if (host) host.hidden = true; return; }
     if (!host) {
       host = document.createElement('div');
       host.style.cssText = 'position:fixed;right:0;top:38%;z-index:2147483000;font:14px/1.4 system-ui,sans-serif';
@@ -293,6 +427,8 @@
         var b = e.target.closest && e.target.closest('button'); if (!b) return;
         if (b.dataset.k === 'tab') { openPanel = !openPanel; return panel(); }
         if (b.dataset.k === 'x') { openPanel = false; return panel(); }
+        if (b.dataset.bridge) { setBridge(b.dataset.bridge, b.dataset.on !== '1'); return panel(); }
+        if (b.dataset.k === 'all') { setBridge(Object.keys(TASK).filter(function (a) { return a !== APP; }), true); return panel(); }
         if (b.dataset.done) { doneAll(b.dataset.done, true); b.textContent = 'Concluído em todos'; b.disabled = true; return; }
         if (b.dataset.key) { openPanel = false; panel(); goTo(parse(b.dataset.key)); }
       });
@@ -304,9 +440,18 @@
       '.h{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:12px;color:#35e0ff}' +
       '.x{background:none;border:0;color:#959cbd;font-size:18px;line-height:1;padding:2px 6px}.row{border-top:1px solid #272c42;padding:8px 0;display:grid;gap:4px}' +
       '.it{display:block;width:100%;text-align:left;background:#10121b;border:1px solid #272c42;color:inherit;border-radius:8px;padding:7px 9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.it:hover{border-color:#35e0ff}' +
-      '.it small{display:block;color:#959cbd;font-size:11px}.m{color:#b78cff;font-size:11px;padding-left:2px}.ok{justify-self:start;background:none;border:1px solid #4fe39a;color:#4fe39a;border-radius:8px;padding:5px 9px;font-size:12px}.ok:disabled{opacity:.6;cursor:default}@media print{:host{display:none}}</style>';
-    if (!openPanel) { root.innerHTML = css + '<button class="tab" data-k="tab" title="Vínculos com outros apps">⟷ ' + list.length + '</button>'; return; }
-    root.innerHTML = css + '<div class="box"><div class="h"><span>Vínculos</span><button class="x" data-k="x" aria-label="Fechar">×</button></div>' + list.map(function (l) {
+      '.it small{display:block;color:#959cbd;font-size:11px}.m{color:#b78cff;font-size:11px;padding-left:2px}.ok{justify-self:start;background:none;border:1px solid #4fe39a;color:#4fe39a;border-radius:8px;padding:5px 9px;font-size:12px}.ok:disabled{opacity:.6;cursor:default}.sec{margin:6px 0 4px;font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#b78cff}.p{margin:4px 0 8px;color:#959cbd;font-size:12px}.brs{display:grid;grid-template-columns:1fr 1fr;gap:6px}.br{display:flex;justify-content:space-between;gap:6px;background:#10121b;border:1px solid #272c42;color:inherit;border-radius:8px;padding:6px 8px;font-size:12px}.br[data-on="1"]{border-color:#4fe39a;color:#4fe39a}.br.all{grid-column:1/-1;justify-content:center;border-color:#35e0ff;color:#35e0ff}@media print{:host{display:none}}</style>';
+    if (!openPanel) { root.innerHTML = css + '<button class="tab" data-k="tab" title="Vínculos com outros apps">⟷' + (list.length ? ' ' + list.length : '') + '</button>'; return; }
+    var bsec = '';
+    if (isTask) {
+      var B = bridges();
+      bsec = '<div class="sec">Vincular todos os dados</div>' + (B.all
+        ? '<p class="p">Todos os apps de tarefas estão vinculados entre si. Para mudar, use a página inicial do Workspace.</p>'
+        : '<div class="brs">' + Object.keys(TASK).filter(function (a) { return a !== APP; }).map(function (a) { var on = bridged(APP, a, B); return '<button class="br" data-bridge="' + esc(a) + '" data-on="' + (on ? 1 : 0) + '">' + esc(NAMES[a]) + '<span>' + (on ? '✓' : '+') + '</span></button>'; }).join('') +
+          '<button class="br all" data-k="all">Vincular com todos</button></div>' +
+          '<p class="p">As tarefas deste app e do app vinculado passam a ser as mesmas nos dois: título, data, texto e concluído mudam juntos.</p>');
+    }
+    root.innerHTML = css + '<div class="box"><div class="h"><span>Vínculos</span><button class="x" data-k="x" aria-label="Fechar">×</button></div>' + bsec + (list.length && isTask ? '<div class="sec">Itens ligados</div>' : '') + list.map(function (l) {
       return '<div class="row"><button class="it" data-key="' + esc(l.mine.key) + '">' + esc(l.lm.t || 'Item') + '<small>aqui · ' + esc(l.lm.k || '') + '</small></button>' +
         '<span class="m">⟷ ' + (l.mirror ? 'cópia espelhada' : 'vinculado a') + '</span>' +
         '<button class="it" data-key="' + esc(l.other.key) + '">' + esc(l.lo.t || 'Item') + '<small>' + esc(NAMES[l.other.app] || l.other.app) + ' · ' + esc(l.lo.k || '') + '</small></button>' +
@@ -315,14 +460,14 @@
   }
 
   /* ---------- partida ---------- */
-  function cycle() { consume(); mirror(); panel(); }
+  function cycle() { consume(); panel(); return mirror().then(bridgeCycle); }
   function boot() {
     panel();
     if (!ad) return;
     var tries = 0, t = setInterval(function () {
       var ok = false;
       try { var n = ad.sign && document.querySelector(ad.sign); ok = (ad.sign ? !!(n && n.children.length) : document.readyState === 'complete') && (ad.ok ? ad.ok() : typeof S !== 'undefined'); } catch (e) {}
-      if (ok) { clearInterval(t); setTimeout(function () { isReady = true; consume(); deep(); mirror(); }, ad.sign ? 400 : 1500); }
+      if (ok) { clearInterval(t); setTimeout(function () { isReady = true; panel(); consume(); deep(); mirror().then(bridgeCycle); }, ad.sign ? 400 : 1500); }
       else if (++tries > 240) clearInterval(t);
     }, 250);
   }
@@ -330,7 +475,7 @@
   addEventListener('storage', function (e) {
     if (!e.key) return;
     if (e.key === 'ws-inbox:' + APP) consume();
-    else if (e.key === 'workspace-v1' || /-v\d+$/.test(e.key)) { clearTimeout(soon); soon = setTimeout(function () { mirror(); panel(); }, 600); }
+    else if (e.key === 'workspace-v1' || e.key === 'ws-canon' || /-v\d+$/.test(e.key)) { clearTimeout(soon); soon = setTimeout(function () { panel(); mirror().then(bridge); }, 600); }
   });
   addEventListener('message', function (e) {
     if (e.origin !== ORIGIN || !e.data || typeof e.data !== 'object') return;
