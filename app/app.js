@@ -227,6 +227,7 @@ let toast = () => {};
       </div>`;
   }
   const sideSoon = debounce(() => { if (document.activeElement !== $('#q')) renderSide(); }, 400);
+  window.EloOpen = id => openDiagram(id);
   function openDiagram(id) {
     commit();
     S.set.cur = id; Store.saveSet();

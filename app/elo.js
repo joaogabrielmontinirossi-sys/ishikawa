@@ -52,7 +52,8 @@
   }
 
   /* ---------- adaptadores: como cada app guarda, cria, abre e redesenha ---------- */
-  function find(s, id) { var l = S[s] || []; for (var i = 0; i < l.length; i++) if (l[i].id === id) return l[i]; return null; }
+  function find(s, id) { var l = ad && ad.list ? ad.list(s) : (typeof S !== 'undefined' && S[s]) || []; for (var i = 0; i < l.length; i++) if (l[i].id === id) return l[i]; return null; }
+  function ymd() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
   function ord(a, b) { return (a.ordem || 0) - (b.ordem || 0); }
   var AD = {
     'frondosa': {
@@ -101,10 +102,61 @@
       },
       done: function (s, r, on) { r.feito = on ? Date.now() : 0; },
       open: function (s, r) { abrirCartao(r); }
-    }
+    },
+    'blocos': {
+      sign: '#main', f: { blocos: { t: 'acao', d: 'prazo', b: 'notas' } },
+      save: function (s, r) { Data.put(s, r); },
+      refresh: function () { draw(); },
+      create: function (e) {
+        var b = capturar('Item do Workspace', null, false); // nasce na Caixa de entrada, com tipo e tamanho padrão
+        if (!b) throw new Error('sem onde criar');
+        b.id = e.id; b.acao = String(e.title).slice(0, 120); b.saida = 'Feito: ' + String(e.title).slice(0, 100); b.notas = e.text; b.prazo = e.date || '';
+        Data.put('blocos', b);
+      },
+      done: function (s, r, on) { r.feito = on ? Date.now() : 0; if (on) { r.inicio = 0; if (!r.dia) r.dia = ymd(); } },
+      open: function (s, r) { sheetBloco(r.id); }
+    },
+    'blocos2': {
+      sign: '#main', f: { blocos: { t: 'titulo', d: 'prazo', b: 'texto' } },
+      save: function (s, r) { Data.put(s, r); },
+      refresh: function () { draw(); },
+      create: function (e) { novo({ id: e.id, titulo: e.title, texto: e.text, prazo: e.date || '' }); DB.changed(); },
+      done: function (s, r, on) { r.feito = on ? Date.now() : 0; },
+      open: function (s, r) { sheetBloco(r.id); }
+    },
+    'blocos3': {
+      sign: '#main', f: { pecas: { t: 'titulo', d: 'prazo', b: 'notas' } },
+      save: function (s, r) { Data.put(s, r); },
+      refresh: function () { draw(); },
+      create: function (e) {
+        var o = S.obras.filter(function (x) { return !x.arquivada; }).sort(ord)[0];
+        if (!o) throw new Error('crie uma obra no Blocos 3 primeiro');
+        var p = novaTarefa(o.id, 'Item do Workspace', true); // ocupa a próxima peça livre da planta
+        if (!p) throw new Error('sem peça livre');
+        p.id = e.id; p.titulo = e.title; p.notas = e.text; p.prazo = e.date || '';
+        Data.put('pecas', p);
+      },
+      done: function (s, r, on) { r.feito = on ? Date.now() : 0; },
+      open: function (s, r) { abrir(r.obra, r.id); }
+    },
+    'orbita': {
+      sign: '#panel', f: { tasks: { t: 'title', d: 'due', b: 'notes' } },
+      ok: function () { return !!window.OrbitaAPI; },
+      list: function (s) { return s === 'tasks' ? OrbitaAPI.tasks() : []; },
+      save: function () { OrbitaAPI.save(); },
+      refresh: function () {},
+      create: function (e) { OrbitaAPI.add({ id: e.id, title: e.title, notes: e.text, due: e.date || '' }); OrbitaAPI.save(); },
+      done: function (s, r, on) { r.done = !!on; r.doneAt = on ? Date.now() : 0; },
+      open: function (s, r) { OrbitaAPI.open(r.id); }
+    },
+    /* apps de documentos: aqui só faz sentido abrir direto no item */
+    'ishikawa': { loose: true, f: { diagrams: {} }, ok: function () { return !!window.EloOpen; }, open: function (s, r) { EloOpen(r.id); } },
+    'prisma': { loose: true, f: { boards: {} }, ok: function () { return !!window.EloOpen; }, open: function (s, r) { EloOpen(r.id); } },
+    'lousa': { loose: true, f: { screens: {} }, ok: function () { return !!window.EloOpen; }, open: function (s, r) { EloOpen(r.id); } },
+    'folhear': { loose: true, f: { books: {} }, ok: function () { return typeof openBook === 'function'; }, open: function (s, r) { openBook(r.id); } }
   };
   /* onde existe a ideia de "concluído" */
-  var DONE = { 'frondosa': { tasks: 1 }, 'capynote': { tasks: 1 }, 'alvorada.jgmrossi': { items: 1 }, 'kanban': { cartoes: 1 } };
+  var DONE = { 'frondosa': { tasks: 1 }, 'capynote': { tasks: 1 }, 'alvorada.jgmrossi': { items: 1 }, 'kanban': { cartoes: 1 }, 'blocos': { blocos: 1 }, 'blocos2': { blocos: 1 }, 'blocos3': { pecas: 1 }, 'orbita': { tasks: 1 } };
   var ad = AD[APP] || null, isReady = false, running = false;
   /* todos os itens ligados a este, direta ou indiretamente */
   function group(key) {
@@ -131,21 +183,23 @@
 
   /* ---------- caixa de entrada: cópias enviadas pelo Workspace ---------- */
   function consume() {
-    if (!ad || !isReady) return;
+    if (!ad || !isReady || ad.loose) return;
     var k = 'ws-inbox:' + APP, list = ls(k);
     if (!Array.isArray(list) || !list.length) return;
     try { localStorage.removeItem(k); } catch (e) {}
-    var ids = [];
+    var ids = [], failed = [];
     list.forEach(function (e) {
-      try { if (e && e.op === 'done') { var r = find(e.store, e.id); if (r && ad.done && DONE[APP] && DONE[APP][e.store]) { ad.done(e.store, r, !!e.on); ad.save(e.store, r); } ids.push(e.id); } else if (e && e.id && ad.f[e.store]) { if (!find(e.store, e.id)) ad.create(e); ids.push(e.id); } } catch (err) { console.warn('Elo: não foi possível criar o item recebido', err); }
+      try { if (e && e.op === 'done') { var r = find(e.store, e.id); if (r && ad.done && DONE[APP] && DONE[APP][e.store]) { ad.done(e.store, r, !!e.on); ad.save(e.store, r); } ids.push(e.id); } else if (e && e.id && ad.f[e.store]) { if (!find(e.store, e.id)) ad.create(e); ids.push(e.id); } } catch (err) { console.warn('Elo: não foi possível aplicar o pedido recebido', err); if (e && Date.now() - (e.at || 0) < 7 * 864e5) failed.push(e); }
     });
+    // o que não deu para aplicar agora (por exemplo, falta uma obra no Blocos 3) volta para a fila
+    if (failed.length) try { var again = ls(k); localStorage.setItem(k, JSON.stringify((Array.isArray(again) ? again : []).concat(failed))); } catch (e) {}
     try { ad.refresh(); } catch (e) {}
-    tell({ ws: 'delivered', app: APP, ids: ids });
+    tell({ ws: 'delivered', app: APP, ids: ids, failed: failed.length });
   }
 
   /* ---------- espelho: mantém cópia e original iguais ---------- */
   async function mirror() {
-    if (!ad || !isReady || running || typing()) return;
+    if (!ad || !isReady || ad.loose || running || typing()) return;
     running = true;
     try {
       var P = ls('workspace-v1'), links = (P && P.links) || {}, base = ls('ws-mirror') || {}, dirty = false, changed = false;
@@ -192,7 +246,7 @@
   /* ---------- abrir direto um item ---------- */
   function openItem(store, id) {
     if (!ad || !isReady || !ad.f[store]) return false;
-    var r = find(store, id);
+    var r = ad.loose ? { id: id } : find(store, id);
     if (!r) return false;
     try { ad.open(store, r); return true; } catch (e) { console.warn('Elo: abrir', e); return false; }
   }
@@ -261,8 +315,8 @@
     if (!ad) return;
     var tries = 0, t = setInterval(function () {
       var ok = false;
-      try { var n = document.querySelector(ad.sign); ok = !!(n && n.children.length && typeof S !== 'undefined'); } catch (e) {}
-      if (ok) { clearInterval(t); setTimeout(function () { isReady = true; consume(); deep(); mirror(); }, 400); }
+      try { var n = ad.sign && document.querySelector(ad.sign); ok = (ad.sign ? !!(n && n.children.length) : document.readyState === 'complete') && (ad.ok ? ad.ok() : typeof S !== 'undefined'); } catch (e) {}
+      if (ok) { clearInterval(t); setTimeout(function () { isReady = true; consume(); deep(); mirror(); }, ad.sign ? 400 : 1500); }
       else if (++tries > 240) clearInterval(t);
     }, 250);
   }
