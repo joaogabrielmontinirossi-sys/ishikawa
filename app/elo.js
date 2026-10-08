@@ -46,9 +46,15 @@
       });
     }).catch(function () { return null; });
   }
+  /* uma rotina do Órbita não tem texto: o horário e os dias viram o texto (igual ao que o Workspace escreve) */
+  function routineText(r) {
+    if (!r || !/^\d{2}:\d{2}$/.test(r.start || '') || !Array.isArray(r.days)) return '';
+    var D = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'], days = r.days.map(function (d) { return D[d] || ''; }).filter(Boolean).join(', ');
+    return 'Rotina às ' + r.start + (r.dur ? ', ' + r.dur + ' min' : '') + (days ? ', ' + days : '');
+  }
   function view(r) {
     var d = pick(r, DKEYS).slice(0, 10);
-    return { t: plain(pick(r, TKEYS)).slice(0, 160), b: plain(pick(r, BKEYS)).slice(0, 4000), d: /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : '', mod: +r.mod || +r.updated || 0 };
+    return { t: plain(pick(r, TKEYS)).slice(0, 160), b: plain(pick(r, BKEYS)).slice(0, 4000) || routineText(r), d: /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : '', mod: +r.mod || +r.updated || 0 };
   }
 
   /* ---------- adaptadores: como cada app guarda, cria, abre e redesenha ---------- */
@@ -140,14 +146,14 @@
       open: function (s, r) { abrir(r.obra, r.id); }
     },
     'orbita': {
-      sign: '#panel', f: { tasks: { t: 'title', d: 'due', b: 'notes' } },
+      sign: '#panel', f: { tasks: { t: 'title', d: 'due', b: 'notes' }, routines: { t: 'title' } },
       ok: function () { return !!window.OrbitaAPI; },
-      list: function (s) { return s === 'tasks' ? OrbitaAPI.tasks() : []; },
+      list: function (s) { return s === 'tasks' ? OrbitaAPI.tasks() : s === 'routines' && OrbitaAPI.routines ? OrbitaAPI.routines() : []; },
       save: function () { OrbitaAPI.save(); },
       refresh: function () {},
       create: function (e) { OrbitaAPI.add({ id: e.id, title: e.title, notes: e.text, due: e.date || '' }); OrbitaAPI.save(); },
       done: function (s, r, on) { r.done = !!on; r.doneAt = on ? Date.now() : 0; },
-      open: function (s, r) { OrbitaAPI.open(r.id); }
+      open: function (s, r) { if (s === 'routines') { if (OrbitaAPI.openR) OrbitaAPI.openR(r.id); } else OrbitaAPI.open(r.id); }
     },
     /* apps de documentos: aqui só faz sentido abrir direto no item */
     'ishikawa': { loose: true, f: { diagrams: {} }, ok: function () { return !!window.EloOpen; }, open: function (s, r) { EloOpen(r.id); } },
