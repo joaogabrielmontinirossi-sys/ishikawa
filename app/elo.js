@@ -290,6 +290,7 @@
       for (var lk in links) { var L = links[lk]; if (L && L.on && L.mirror && L.mirror.to) to[L.mirror.to] = L.mirror.from; }
       var canon = ls('ws-canon') || {}, base = ls('ws-base') || {}, seeds = ls('ws-seed') || {}, touched = {}, myBase = {}, mySeeds = {}, mine = {}, changed = false, now = Date.now();
       var list = ((ad.list ? ad.list(store) : S[store]) || []).slice(), canDone = !!(DONE[APP] && DONE[APP][store]);
+      var exs = ls('ws-ex'), exg = (exs && exs.go && exs.g) || {};
       // 1) o que eu tenho: publica o que mudou aqui, puxa o que mudou nos outros
       for (var i = 0; i < list.length; i++) {
         var rec = list[i], sk = APP + ':' + rec.id;
@@ -340,7 +341,7 @@
           if (!C2.gone[APP]) { C2.gone[APP] = 1; delete C2.m[APP]; touched[G2] = 1; }
           continue;
         }
-        if ((C2.gone && C2.gone[APP]) || !C2.t || seeds[bk]) continue;
+        if ((C2.gone && C2.gone[APP]) || !C2.t || seeds[bk] || exg[G2]) continue; // exemplos já limpos não voltam
         if (!Object.keys(C2.m).some(function (a) { return a !== APP && bridged(APP, a, B); })) continue;
         if (find(store, id)) continue;
         if (out.made >= 40) { out.more = true; break; }
@@ -381,6 +382,75 @@
     try { localStorage.setItem('workspace-v1', JSON.stringify(P)); } catch (e) {}
     tell({ ws: 'prefs' });
     bridgeCycle().then(function () { if (on) tell({ ws: 'bridge-run', apps: [APP].concat(others) }); });
+  }
+
+  /* ---------- limpar as tarefas de exemplo que vêm com os apps ----------
+     O Workspace pede em duas etapas (ws-ex): "scan" (cada app aponta os grupos que são exemplo) e, depois que a
+     pessoa confirma, "go" (cada app apaga o que tem desses grupos, inclusive as tarefas vinculadas vindas de outros apps). */
+  var EXT = {
+    'orbita': ['Enviar proposta ao cliente', 'Ligar para a contadora', 'Responder e-mails pendentes', 'Comprar ingredientes do jantar', 'Revisar apresentação de quinta', 'Agendar dentista', 'Pagar boleto do condomínio', 'Planejar treinos da semana', 'Ler capítulo 4', 'Organizar fotos da viagem', 'Pesquisar curso de inglês', 'Trocar lâmpada do corredor'],
+    'frondosa': ['Organizar a casa', 'Projeto do trabalho', 'Cuidar da saúde', 'Viagem de fim de ano', 'Estudar inglês'],
+    'alvorada.jgmrossi': ['Conhecer o Alvorada: clique para abrir', 'Depois: organizar etiquetas e listas', 'Planejamento da semana'],
+    'capynote': ['Explorar o Capynote'],
+    'kanban': ['Arraste este cartão para “Fazendo”', 'Abra um cartão e veja tudo o que cabe nele', 'Conheça os 120 power-ups', 'Captura rápida: digite “Pagar boleto sexta #urgente !!”', 'Troque a vista: Quadro, Tabela, Calendário, Painel…', 'Esta lista tem limite de 3 cartões (WIP)', 'Ligue a sincronização em Ajustes', 'Abrir o Kanban pela primeira vez']
+  };
+  function delById(s, r) { Data.del(s, r.id); }
+  var DEL = {
+    'frondosa': delById, 'alvorada.jgmrossi': delById, 'kanban': delById, 'blocos': delById, 'blocos2': delById, 'blocos3': delById,
+    'capynote': function (s, r) { var i = S.tasks.indexOf(r); if (i >= 0) S.tasks.splice(i, 1); DB.del('tasks', r.id); },
+    'orbita': function (s, r) { if (!OrbitaAPI.del) throw new Error('Órbita sem apagar'); OrbitaAPI.del(r.id); OrbitaAPI.save(); }
+  };
+  /* nos apps com quadros, caixas ou obras, o exemplo mora num recipiente chamado "... (exemplo)" */
+  function inExampleBox(r) {
+    try {
+      var boxes = APP === 'kanban' ? S.quadros : APP === 'blocos2' ? S.caixas : (APP === 'blocos' || APP === 'blocos3') ? S.obras : null;
+      if (!boxes) return false;
+      var pid = APP === 'kanban' ? r.quadro : APP === 'blocos2' ? r.caixa : r.obra, o = boxes.filter(function (x) { return x.id === pid; })[0];
+      return !!(o && /\(exemplo\)\s*$/i.test(o.nome || ''));
+    } catch (e) { return false; }
+  }
+  function isExample(r, F, seeds) {
+    if (r.seed || r.ex || seeds[APP + ':' + r.id] || inExampleBox(r)) return true;
+    var list = EXT[APP] || [];
+    if (APP === 'blocos2') { try { list = EXEMPLO.blocos.map(function (b) { return b.titulo; }); } catch (e) {} }
+    return list.indexOf(String(r[F.t] || '')) >= 0;
+  }
+  function exStep() {
+    try {
+      if (!ad || ad.loose || !isReady || !TASK[APP] || !DEL[APP]) return;
+      var X = ls('ws-ex');
+      if (!X || typeof X !== 'object') return;
+      var D = ls('ws-ex-done') || {}, store = TASK[APP], found = 0, removed = 0, did = false, seeds = ls('ws-seed') || {};
+      var P = ls('workspace-v1') || {}, links = P.links || {}, to = {};
+      for (var lk in links) { var L = links[lk]; if (L && L.on && L.mirror && L.mirror.to) to[L.mirror.to] = L.mirror.from; }
+      var list = ((ad.list ? ad.list(store) : S[store]) || []).slice();
+      if (X.scan && (D[APP + ':s'] || 0) < X.scan) {
+        var add = {};
+        list.forEach(function (r) {
+          if (!r || !r.id || r.deleted || r.lixo) return;
+          var F = fieldsOf(store, r);
+          if (isExample(r, F, seeds)) { add[groupOf(store, r.id, to)] = String(r[F.t] || '').slice(0, 80) || '(sem título)'; found++; }
+        });
+        var fx = ls('ws-ex') || X; if (!fx.g || typeof fx.g !== 'object') fx.g = {};
+        for (var k in add) fx.g[k] = add[k];
+        try { localStorage.setItem('ws-ex', JSON.stringify(fx)); } catch (e) {}
+        X = fx; D[APP + ':s'] = X.scan; did = true;
+      }
+      if (X.go && X.go >= (X.scan || 0) && (D[APP + ':g'] || 0) < X.go) {
+        var g = X.g || {};
+        list.forEach(function (r) {
+          if (!r || !r.id || !g[groupOf(store, r.id, to)]) return;
+          try { DEL[APP](store, r); removed++; } catch (e) { console.warn('Elo: não foi possível apagar o exemplo', e); }
+        });
+        D[APP + ':g'] = X.go; did = true;
+        if (removed) try { ad.refresh(); } catch (e) {}
+      }
+      if (did) {
+        var fd = ls('ws-ex-done') || {}; fd[APP + ':s'] = D[APP + ':s']; fd[APP + ':g'] = D[APP + ':g'];
+        try { localStorage.setItem('ws-ex-done', JSON.stringify(fd)); } catch (e) {}
+        tell({ ws: 'ex', app: APP, found: found, removed: removed });
+      }
+    } catch (e) { console.warn('Elo: limpar exemplos', e); }
   }
 
   /* ---------- abrir direto um item ---------- */
@@ -460,14 +530,14 @@
   }
 
   /* ---------- partida ---------- */
-  function cycle() { consume(); panel(); return mirror().then(bridgeCycle); }
+  function cycle() { consume(); panel(); return mirror().then(exStep).then(bridgeCycle); }
   function boot() {
     panel();
     if (!ad) return;
     var tries = 0, t = setInterval(function () {
       var ok = false;
       try { var n = ad.sign && document.querySelector(ad.sign); ok = (ad.sign ? !!(n && n.children.length) : document.readyState === 'complete') && (ad.ok ? ad.ok() : typeof S !== 'undefined'); } catch (e) {}
-      if (ok) { clearInterval(t); setTimeout(function () { isReady = true; panel(); consume(); deep(); mirror().then(bridgeCycle); }, ad.sign ? 400 : 1500); }
+      if (ok) { clearInterval(t); setTimeout(function () { isReady = true; panel(); consume(); deep(); mirror().then(exStep).then(bridgeCycle); }, ad.sign ? 400 : 1500); }
       else if (++tries > 240) clearInterval(t);
     }, 250);
   }
