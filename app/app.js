@@ -1,4 +1,5 @@
 'use strict';
+const GSync = window.GSyncLib || { web: false, on: () => false, io: null, html: () => '', off() {}, onChange: null };
 /* Ishikawa — interface: lista de diagramas, quadro, estrutura, plano de ação, exportações e sincronização */
 
 let toast = () => {};
@@ -652,12 +653,12 @@ ${o.actions && acts ? `<table><thead><tr><th class="cap" colspan="10">Plano de a
     S.diagrams.filter(o => o.seed).forEach(o => { S.diagrams = S.diagrams.filter(x => x !== o); DB.del('diagrams', o.id, true); });
   }
   async function syncNow(manual) {
-    if (!Sync.on) return;
+    if (!Sync.on && !GSync.on()) return;
     if (Sync.busy) { Sync.again = true; return; }
     Sync.busy = true;
     try {
       commit();
-      const r = await api('sync');
+      const r = await (Sync.on ? api('sync') : GSync.io());
       if (!r.ok) throw new Error('não foi possível ler a pasta');
       const text = r.status === 200 ? await r.text() : '', remote = text.trim() ? JSON.parse(text) : null;
       let pulled = 0;
@@ -668,7 +669,7 @@ ${o.actions && acts ? `<table><thead><tr><th class="cap" colspan="10">Plano de a
       }
       const local = { app: 'ishikawa', version: 1, exported: Date.now(), diagrams: S.diagrams, tombstones: DB.tomb() };
       if (!remote || syncSig(remote) !== syncSig(local)) {
-        const w = await api('sync', { method: 'POST', body: JSON.stringify(local) });
+        const w = await (Sync.on ? api('sync', { method: 'POST', body: JSON.stringify(local) }) : GSync.io({ method: 'POST', body: JSON.stringify(local) }));
         if (!w.ok) throw new Error('não foi possível gravar na pasta');
       }
       if (!S.set.syncedOnce) { S.set.syncedOnce = true; Store.saveSet(); }
@@ -701,7 +702,7 @@ ${o.actions && acts ? `<table><thead><tr><th class="cap" colspan="10">Plano de a
       <p style="margin:0 0 6px">${Sync.on ? `Ativa em <b>${esc(Sync.folder)}</b>${Sync.error ? ` · <span class="err">${esc(Sync.error)}</span>` : Sync.last ? ` · última vez ${fmtRel(Sync.last)}` : ''}` : Sync.detected ? 'Desativada. Google Drive encontrado neste computador.' : 'Desativada. Não encontrei o Google Drive; escolha uma pasta sincronizada.'}</p>
       <div class="row">${Sync.on ? `<button class="btn ghost sm" data-k="syncnow">Sincronizar agora</button><button class="btn ghost sm" data-k="syncoff">Desativar</button>` : Sync.detected ? `<button class="btn sm" data-k="syncauto">Ativar no Google Drive</button>` : ''}${Sync.drives.filter(d => d !== Sync.folder && (Sync.on || d !== Sync.detected)).map(d => `<button class="btn ghost sm" data-k="syncuse" data-path="${esc(d)}">Usar ${esc(d)}</button>`).join('')}<button class="btn ghost sm" data-k="syncpick">Escolher outra pasta…</button></div>
       ${Sync.drives.length > 1 ? '<p class="muted">Há mais de uma conta do Google Drive neste computador: cada unidade (G:, H:…) é uma conta.</p>' : ''}
-      <p class="muted">O Ishikawa grava o arquivo ishikawa-sync.json nessa pasta a cada alteração e o Google Drive o envia para a sua conta. Outro computador com o Ishikawa e o mesmo Drive recebe os diagramas automaticamente.</p>` : `<label>Sincronização</label><p class="muted">A sincronização automática com o Google Drive funciona no aplicativo de Windows (Ishikawa.exe). Aqui, use o backup abaixo para levar os diagramas a outro aparelho.</p>${canInstall() ? `<label>Aplicativo</label><button class="btn ghost sm" data-k="install">${ic('dl')} Instalar o Ishikawa neste aparelho</button><p class="muted">Ele ganha um ícone na tela inicial e abre mesmo sem internet.</p>` : ''}`}
+      <p class="muted">O Ishikawa grava o arquivo ishikawa-sync.json nessa pasta a cada alteração e o Google Drive o envia para a sua conta. Outro computador com o Ishikawa e o mesmo Drive recebe os diagramas automaticamente.</p>` : `${GSync.web ? GSync.html() : `<label>Sincronização</label><p class="muted">A sincronização automática com o Google Drive funciona no aplicativo de Windows (Ishikawa.exe). Aqui, use o backup abaixo para levar os diagramas a outro aparelho.</p>`}${canInstall() ? `<label>Aplicativo</label><button class="btn ghost sm" data-k="install">${ic('dl')} Instalar o Ishikawa neste aparelho</button><p class="muted">Ele ganha um ícone na tela inicial e abre mesmo sem internet.</p>` : ''}`}
       <label>Backup e migração</label>
       <div class="row"><button class="btn ghost sm" data-k="backup">${ic('dl')} Exportar backup (.json)</button><button class="btn ghost sm" data-k="import">${ic('up')} Importar…</button></div>
       <p class="muted">${DB.persistent() ? 'Dados salvos neste dispositivo' : 'Atenção: armazenamento indisponível, os dados somem ao fechar'} · ${count(live().length, 'diagrama', 'diagramas')} · Ishikawa 1.2</p>
@@ -719,7 +720,7 @@ ${o.actions && acts ? `<table><thead><tr><th class="cap" colspan="10">Plano de a
       if (k === 'syncuse') { await syncConfig('sync/config', b.dataset.path); again(); }
       if (k === 'syncpick') { toast('Escolha a pasta na janela que abriu'); await syncConfig('sync/choose', ''); again(); }
       if (k === 'wipe' && await confirmBox('Apagar tudo', 'Todos os diagramas deste dispositivo serão apagados. Isso não pode ser desfeito.' + (Sync.on ? ' A sincronização será desativada e a cópia no Google Drive continua lá.' : ''), 'Apagar tudo', true)) {
-        if (Sync.on) await api('sync/config', { method: 'POST', body: 'off' });
+        if (Sync.on) await api('sync/config', { method: 'POST', body: 'off' }); GSync.off();
         dirty = false;
         for (const s of DB.STORES) await DB.clear(s);
         location.reload();
@@ -834,9 +835,10 @@ ${o.actions && acts ? `<table><thead><tr><th class="cap" colspan="10">Plano de a
       if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     }
     if (/^https?:$/.test(location.protocol)) await syncInfo();
-    if (Sync.avail) {
+    if (Sync.avail || GSync.web) {
+      GSync.onChange = () => syncNow(true);
       const first = Sync.on && !S.set.syncedOnce;
-      DB.onChange = () => { if (Sync.on) syncSoon(); };
+      DB.onChange = () => { if (Sync.on || GSync.on()) syncSoon(); };
       await syncNow();
       if (first && !Sync.error) toast('Sincronizando com o Google Drive: ' + Sync.folder);
       setInterval(() => syncNow(), 60000);
