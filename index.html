@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ishikawa</title>
+<meta name="description" content="Ishikawa — diagramas de causa e efeito (espinha de peixe) com plano de ação, PDF e sincronização.">
+<meta name="theme-color" content="#0e7490">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ishikawa">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar"></aside>
+  <main id="main">
+    <header id="topbar"></header>
+    <div id="stage" tabindex="0"><div id="world"></div></div>
+  </main>
+  <aside id="panel"></aside>
+</div>
+<div id="scrim"></div>
+<div id="toast"></div>
+<input type="file" id="filepick" multiple hidden>
+<script src="gsync.js" data-app="ishikawa"></script>
+<script src="store.js"></script>
+<script src="diagram.js"></script>
+<script src="app.js"></script>
+<script src="elo.js" data-app="ishikawa"></script>
+</body>
+</html>
