@@ -63,6 +63,7 @@
         if (e.store === 'events') Data.put('events', NORM.events({ id: e.id, title: e.title, date: e.date }));
         else Data.put('tasks', NORM.tasks({ id: e.id, title: e.title, note: e.text, due: e.date, order: S.tasks.reduce(function (m, t) { return Math.max(m, t.order || 0); }, 0) + 1 }));
       },
+      done: function (s, r, on) { r.done = on ? Date.now() : 0; },
       open: function (s, r) { if (App.open) App.open(s === 'events' ? { type: 'cal', month: r.date.slice(0, 7), sel: r.date } : { type: 'task', id: r.id }); }
     },
     'capynote': {
@@ -73,6 +74,7 @@
         if (e.store === 'tasks') { var t = { id: e.id, title: e.title, done: false, due: e.date || '', flag: false, noteId: '', created: Date.now() }; S.tasks.push(t); DB.put('tasks', t); }
         else Store.newNote({ id: e.id, title: e.title, content: e.html });
       },
+      done: function (s, r, on) { r.done = !!on; },
       open: function (s, r) { if (s === 'notes') App.openNote(r.id); else App.go({ type: 'tasks' }); }
     },
     'alvorada.jgmrossi': {
@@ -84,6 +86,7 @@
         if (e.store === 'notes') Data.put('notes', NORM.notes({ id: e.id, title: e.title, html: e.html, page: true }));
         else Data.put('items', newItem('task', { id: e.id, title: e.title, desc: e.text, due: e.date || '' }));
       },
+      done: function (s, r, on) { r.status = on ? 'done' : 'todo'; r.doneAt = on ? Date.now() : 0; },
       open: function (s, r) { if (s === 'notes') App.go('journal', null, r.id); else Editor.open(r); }
     },
     'kanban': {
@@ -96,10 +99,34 @@
         var top = function (list, k) { return list.reduce(function (m, c) { return Math.max(m, c[k] || 0); }, 0) + 1; };
         Data.put('cartoes', { id: e.id, quadro: q.id, lista: l.id, titulo: e.title, texto: e.text, prazo: e.date || '', ordem: top(S.cartoes.filter(function (c) { return c.lista === l.id; }), 'ordem'), criado: now, entrou: now, num: top(S.cartoes.filter(function (c) { return c.quadro === q.id; }), 'num') });
       },
+      done: function (s, r, on) { r.feito = on ? Date.now() : 0; },
       open: function (s, r) { abrirCartao(r); }
     }
   };
+  /* onde existe a ideia de "concluído" */
+  var DONE = { 'frondosa': { tasks: 1 }, 'capynote': { tasks: 1 }, 'alvorada.jgmrossi': { items: 1 }, 'kanban': { cartoes: 1 } };
   var ad = AD[APP] || null, isReady = false, running = false;
+  /* todos os itens ligados a este, direta ou indiretamente */
+  function group(key) {
+    var P = ls('workspace-v1'), links = (P && P.links) || {}, seen = {}, q = [key]; seen[key] = 1;
+    while (q.length) { var c = q.pop(); for (var k in links) { var L = links[k]; if (!L || !L.on) continue; var o = L.a === c ? L.b : L.b === c ? L.a : null; if (o && !seen[o]) { seen[o] = 1; q.push(o); } } }
+    return Object.keys(seen);
+  }
+  function canDone(key) { return group(key).some(function (k) { var p = parse(k); return DONE[p.app] && DONE[p.app][p.store]; }); }
+  /* conclui (ou reabre) o item e todos os ligados a ele: cada app recebe o pedido na sua caixa de entrada */
+  function doneAll(key, on) {
+    var apps = {};
+    group(key).forEach(function (k) {
+      var p = parse(k); if (!DONE[p.app] || !DONE[p.app][p.store]) return;
+      var ik = 'ws-inbox:' + p.app, list = ls(ik); if (!Array.isArray(list)) list = [];
+      list.push({ op: 'done', store: p.store, id: p.id, on: !!on, at: Date.now() });
+      try { localStorage.setItem(ik, JSON.stringify(list)); } catch (e) {}
+      apps[p.app] = 1;
+    });
+    consume();
+    var others = Object.keys(apps).filter(function (a) { return a !== APP; });
+    if (others.length) tell({ ws: 'deliver', apps: others });
+  }
   function fieldsOf(s, r) { return ad.fields ? ad.fields(s, r) : ad.f[s]; }
 
   /* ---------- caixa de entrada: cópias enviadas pelo Workspace ---------- */
@@ -110,7 +137,7 @@
     try { localStorage.removeItem(k); } catch (e) {}
     var ids = [];
     list.forEach(function (e) {
-      try { if (e && e.id && ad.f[e.store]) { if (!find(e.store, e.id)) ad.create(e); ids.push(e.id); } } catch (err) { console.warn('Elo: não foi possível criar o item recebido', err); }
+      try { if (e && e.op === 'done') { var r = find(e.store, e.id); if (r && ad.done && DONE[APP] && DONE[APP][e.store]) { ad.done(e.store, r, !!e.on); ad.save(e.store, r); } ids.push(e.id); } else if (e && e.id && ad.f[e.store]) { if (!find(e.store, e.id)) ad.create(e); ids.push(e.id); } } catch (err) { console.warn('Elo: não foi possível criar o item recebido', err); }
     });
     try { ad.refresh(); } catch (e) {}
     tell({ ws: 'delivered', app: APP, ids: ids });
@@ -206,6 +233,7 @@
         var b = e.target.closest && e.target.closest('button'); if (!b) return;
         if (b.dataset.k === 'tab') { openPanel = !openPanel; return panel(); }
         if (b.dataset.k === 'x') { openPanel = false; return panel(); }
+        if (b.dataset.done) { doneAll(b.dataset.done, true); b.textContent = 'Concluído em todos'; b.disabled = true; return; }
         if (b.dataset.key) { openPanel = false; panel(); goTo(parse(b.dataset.key)); }
       });
     }
@@ -216,12 +244,13 @@
       '.h{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:12px;color:#35e0ff}' +
       '.x{background:none;border:0;color:#959cbd;font-size:18px;line-height:1;padding:2px 6px}.row{border-top:1px solid #272c42;padding:8px 0;display:grid;gap:4px}' +
       '.it{display:block;width:100%;text-align:left;background:#10121b;border:1px solid #272c42;color:inherit;border-radius:8px;padding:7px 9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.it:hover{border-color:#35e0ff}' +
-      '.it small{display:block;color:#959cbd;font-size:11px}.m{color:#b78cff;font-size:11px;padding-left:2px}@media print{:host{display:none}}</style>';
+      '.it small{display:block;color:#959cbd;font-size:11px}.m{color:#b78cff;font-size:11px;padding-left:2px}.ok{justify-self:start;background:none;border:1px solid #4fe39a;color:#4fe39a;border-radius:8px;padding:5px 9px;font-size:12px}.ok:disabled{opacity:.6;cursor:default}@media print{:host{display:none}}</style>';
     if (!openPanel) { root.innerHTML = css + '<button class="tab" data-k="tab" title="Vínculos com outros apps">⟷ ' + list.length + '</button>'; return; }
     root.innerHTML = css + '<div class="box"><div class="h"><span>Vínculos</span><button class="x" data-k="x" aria-label="Fechar">×</button></div>' + list.map(function (l) {
       return '<div class="row"><button class="it" data-key="' + esc(l.mine.key) + '">' + esc(l.lm.t || 'Item') + '<small>aqui · ' + esc(l.lm.k || '') + '</small></button>' +
         '<span class="m">⟷ ' + (l.mirror ? 'cópia espelhada' : 'vinculado a') + '</span>' +
-        '<button class="it" data-key="' + esc(l.other.key) + '">' + esc(l.lo.t || 'Item') + '<small>' + esc(NAMES[l.other.app] || l.other.app) + ' · ' + esc(l.lo.k || '') + '</small></button></div>';
+        '<button class="it" data-key="' + esc(l.other.key) + '">' + esc(l.lo.t || 'Item') + '<small>' + esc(NAMES[l.other.app] || l.other.app) + ' · ' + esc(l.lo.k || '') + '</small></button>' +
+        (canDone(l.mine.key) ? '<button class="ok" data-done="' + esc(l.mine.key) + '">✓ Concluir em todos</button>' : '') + '</div>';
     }).join('') + '</div>';
   }
 
